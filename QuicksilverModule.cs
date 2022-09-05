@@ -1,27 +1,73 @@
-using System.Collections;
+﻿using System.Collections;
 using ThunderRoad;
 using UnityEngine;
+using HarmonyLib;
+using Newtonsoft.Json;
+using System.IO;
+using System;
 
 namespace Quicksilver
 {
-    public class QuicksilverModule : LevelModule
+    public enum QuicksilverMusic
     {
-        public bool instaActivation;
+        None,
+        SweetDreams,
+        TimeInABottle
+    }
+
+    [Serializable]
+    public class QuicksilverData
+    {
+        public bool instantStop;
         public bool lightningIndicators;
         public bool lightningTrail;
-        public float quicksilverSpeed;
+        // public bool lightningBody;
+        public QuicksilverMusic backgroundMusic;
+        public float musicVolume;
+        public float movementSpeed;
+        public bool useCustomTimescale;
+        public float customTimescale;
+    }
 
+    public class QuicksilverModule : LevelModule
+    {
+        public const string OPTIONS_FILE_PATH = "\\Mods\\Quicksilver\\QuicksilverOptions.opt";
+        public static QuicksilverData data;
         private bool quicksilverMode;
         private bool orgPlayerFallDamage;
         private bool orgHealthVignette;
+        private static float orgTimeScale;
         private Locomotion.CrouchMode orgMode;
-        private EffectInstance leftInstance, rightInstance, trailInstance;
+        private EffectInstance leftInstance, rightInstance, trailInstance, musicInstance;
 
         public override IEnumerator OnLoadCoroutine()
         {
-            Debug.Log("(Quicksilver) Loaded successfully!");
+            try
+            {
+                data = JsonConvert.DeserializeObject<QuicksilverData>(File.ReadAllText(Application.streamingAssetsPath + OPTIONS_FILE_PATH));
+            }
+            catch
+            {
+                Debug.LogError("Unable to read QuicksilverOptions.opt. The mod WILL break!");
+            }
+
             Player.crouchOnJump = false;
+            new Harmony("Use").PatchAll();
             return base.OnLoadCoroutine();
+        }
+
+        [HarmonyPatch(typeof(SpellPowerSlowTime), "Use")]
+        class SpellPowerSlowTimePatch
+        {
+            public static bool Prefix()
+            {
+                if (data.useCustomTimescale)
+                {
+                    orgTimeScale = Player.currentCreature.mana.GetPowerSlowTime().scale;
+                    Player.currentCreature.mana.GetPowerSlowTime().scale = data.customTimescale;
+                }
+                return true;
+            }
         }
 
         public override void Update()
@@ -31,7 +77,7 @@ namespace Quicksilver
             if (Player.currentCreature == null) return;
             switch (GameManager.slowMotionState)
             {
-                case GameManager.SlowMotionState.Disabled: // If the player is not using instant activation...
+                case GameManager.SlowMotionState.Disabled:
                     if (quicksilverMode)
                         StopQuicksilver();
                     break;
@@ -40,26 +86,28 @@ namespace Quicksilver
                         StartQuicksilver();
                     break;
                 case GameManager.SlowMotionState.Stopping:
-                    if (instaActivation)
+                    if (data.instantStop)
                         GameManager.StopSlowMotion();
                     if (quicksilverMode)
                         StopQuicksilver();
                     break;
             }
 
-            if (!quicksilverMode) return;
-            if (!Player.local.locomotion.isGrounded)
-                Player.local.locomotion.rb.AddForce(Physics.gravity / Mathf.Pow(Time.timeScale, 2f), ForceMode.Acceleration);
-            Player.local.locomotion.rb.velocity = new Vector3(
-                Player.local.locomotion.moveDirection.x / Time.timeScale * quicksilverSpeed,
-                Player.local.locomotion.rb.velocity.y,
-                Player.local.locomotion.moveDirection.z / Time.timeScale * quicksilverSpeed);
-            UpdateJoints(false);
+            if (quicksilverMode)
+            {
+                if (!Player.local.locomotion.isGrounded)
+                    Player.local.locomotion.rb.AddForce(Physics.gravity / Mathf.Pow(Time.timeScale, 2f), ForceMode.Acceleration);
+                Player.local.locomotion.rb.velocity = new Vector3(
+                    Player.local.locomotion.moveDirection.x / Time.timeScale * data.movementSpeed,
+                    Player.local.locomotion.rb.velocity.y,
+                    Player.local.locomotion.moveDirection.z / Time.timeScale * data.movementSpeed);
+                UpdateJoints(true);
+            }
         }
 
         private void StartQuicksilver()
         {
-            /*if (lightningIndicators)
+            if (data.lightningIndicators)
             {
                 EffectData lightningEffect = Catalog.GetData<EffectData>(Catalog.GetData<SpellCastLightning>("Lightning").chargeEffectId);
                 lightningEffect.volumeDb = float.MinValue;
@@ -67,29 +115,51 @@ namespace Quicksilver
                 leftInstance = lightningEffect.Spawn(Player.local.handLeft.ragdollHand.transform);
                 leftInstance.SetIntensity(1f);
                 leftInstance.Play();
-                lightningEffect.Spawn()
                 rightInstance = lightningEffect.Spawn(Player.local.handRight.ragdollHand.transform);
                 rightInstance.SetIntensity(1f);
                 rightInstance.Play();
             }
 
-            if (lightningTrail)
+            if (data.lightningTrail)
+               Catalog.GetData<EffectData>("ImbueLightning").Spawn(Player.local.creature.ragdoll.meshRootBone).Play();
+
+            if (data.backgroundMusic != QuicksilverMusic.None)
             {
-                Gradient color = new Gradient();
-                GradientColorKey[] colorKeys = { new GradientColorKey(Color.magenta, 0.0f), new GradientColorKey(Color.magenta, 1.0f) };
-                GradientAlphaKey[] alphaKeys = { new GradientAlphaKey(1.0f, 0.0f), new GradientAlphaKey(1.0f, 1.0f) };
-                color.SetKeys(colorKeys, alphaKeys);
-                color.mode = GradientMode.Blend;
-                EffectData trailEffect = Catalog.GetData<EffectData>("LightningTrail");
-                ((EffectModuleShader)trailEffect.modules[trailEffect.modules.Count - 1]).lifeTime = float.MaxValue;
-                trailInstance = trailEffect.Spawn(Player.local.creature.ragdoll.meshRootBone);
-                trailInstance.SetIntensity(1f);
-                trailInstance.Play();
+                EffectData music;
+                switch (data.backgroundMusic)
+                {
+                    default:
+                        music = Catalog.GetData<EffectData>("SweetDreams");
+                        break;
+                    case QuicksilverMusic.TimeInABottle:
+                        music = Catalog.GetData<EffectData>("TimeInABottle");
+                        break;
+                }
+                musicInstance = music.Spawn(Player.local.transform);
+                if (data.useCustomTimescale)
+                {
+                    musicInstance.SetSpeed(1 / data.customTimescale);
+                    musicInstance.effects.ForEach(e => e.gameObject.GetComponentInChildren<AudioSource>().pitch = 1 / data.customTimescale);
+                }
+                else
+                {
+                    musicInstance.SetSpeed(1 / Time.timeScale);
+                    musicInstance.effects.ForEach(e => e.gameObject.GetComponentInChildren<AudioSource>().pitch = 1 / Time.timeScale);
+                }
+                musicInstance.Play();
+            }
+
+            /*if ()
+            {
+                EffectData bodyEffect = Catalog.GetData<EffectData>(Catalog.GetData<SpellCastLightning>("Lightning").boltLoopEffectId);
+                bodyInstance = bodyEffect.Spawn(Player.local.creature.ragdoll.transform);
+                bodyInstance.Play();
             }*/
 
             quicksilverMode = true;
             orgPlayerFallDamage = Player.fallDamage;
             orgHealthVignette = GameManager.options.healthVignette;
+            CameraEffects.RefreshHealth();
             orgMode = GameManager.options.stickCrouchMode;
             GameManager.options.stickCrouchMode = Locomotion.CrouchMode.Disabled;
             CameraEffects.healthVignette = false;
@@ -99,27 +169,15 @@ namespace Quicksilver
 
         private void UpdateQuicksilver()
         {
-            /*Debug.LogWarning("Finger Speed: " + Player.currentCreature.data.ragdollData.fingerSpeed);
-            Debug.LogWarning("Animator Speed: " + Player.currentCreature.animator.speed);
-            Debug.LogWarning("Ragdoll Turn Speed: " + Player.currentCreature.turnSpeed);
-            Debug.LogWarning("Player Turn Speed: " + Player.local.locomotion.turnSpeed);
-            Debug.LogWarning("SnapTurnDelay Speed: " + PlayerControl.local.snapTurnDelay);*/
-
             // SPEED MODIFIERS
             Player.currentCreature.data.ragdollData.fingerSpeed = 5f / Time.timeScale; // FINGER SPEED - Found in CreatureData.RagdollData.fingerSpeed
             Player.currentCreature.animator.speed = 1f / Time.timeScale; // ANIMATOR SPEED - Controls how fast the legs move when walking/running
+            Player.local.locomotion.airSpeed = 0.02f / Time.timeScale;
 
             // TURN MODIFIERS
             Player.currentCreature.turnSpeed = 6f / Time.timeScale; // RAGDOLL TURN SPEED - Rotates the player's ragdoll; found in Creature.turnSpeed
             Player.local.locomotion.turnSpeed = 2f / Time.timeScale; // PLAYER TURN SPEED - Rotates the player's perspective; found in Locomotion.turnSpeed
             PlayerControl.local.snapTurnDelay = 0.25f * Time.timeScale; // SNAP TURN DELAY - Found in PlayerControl.snapTurnDelay
-
-            /*Debug.LogWarning("Finger Speed: " + Player.currentCreature.data.ragdollData.fingerSpeed);
-            Debug.LogWarning("Animator Speed: " + Player.currentCreature.animator.speed);
-            Debug.LogWarning("Ragdoll Turn Speed: " + Player.currentCreature.turnSpeed);
-            Debug.LogWarning("Player Turn Speed: " + Player.local.locomotion.turnSpeed);
-            Debug.LogWarning("SnapTurnDelay Speed: " + PlayerControl.local.snapTurnDelay);*/
-
             
             // LEFT FOOT MODIFIERS
             Player.currentCreature.footLeft.playerFoot.kickExtendDuration = 0.2f * Time.timeScale; // EXTEND DURATION - Found in PlayerFoot.kickExtendDuration
@@ -134,14 +192,29 @@ namespace Quicksilver
 
         private void StopQuicksilver()
         {
-           /* if (lightningIndicators)
+            if (data.useCustomTimescale)
+                Player.currentCreature.mana.GetPowerSlowTime().scale = orgTimeScale;
+
+            if (leftInstance != null)
             {
                 leftInstance.Stop();
                 rightInstance.Stop();
+                leftInstance = null;
+                rightInstance = null;
+
             }
 
-            if (lightningTrail)
-                trailInstance.Stop();*/
+            if (trailInstance != null)
+            {
+                trailInstance.Stop();
+                trailInstance = null;
+            }
+
+            if (musicInstance != null)
+            {
+                musicInstance.Stop();
+                // musicInstance = null;
+            }
 
             quicksilverMode = false;
             Player.fallDamage = orgPlayerFallDamage;
@@ -152,12 +225,12 @@ namespace Quicksilver
                 Player.local.locomotion.moveDirection.x,
                 Player.local.locomotion.rb.velocity.y,
                 Player.local.locomotion.moveDirection.z);
-            UpdateJoints(true);
+            UpdateJoints(false);
         }
 
-        private void UpdateJoints(bool isExiting)
+        private void UpdateJoints(bool isEntering)
         {
-            if (!isExiting)
+            if (isEntering)
             {
                 if (Player.currentCreature.handLeft.grabbedHandle)
                     Player.local.handLeft.ragdollHand.grabbedHandle.SetJointDrive(
@@ -166,10 +239,10 @@ namespace Quicksilver
                 else
                     Player.local.handLeft.link.SetJointConfig(
                         Player.local.handLeft.link.controllerJoint,
-                        new Vector2(10f / Time.timeScale, 1),
-                        new Vector2(10f / Time.timeScale, 1),
-                        Player.currentCreature.data.forceMaxPosition * 10 / Time.timeScale,
-                        Player.currentCreature.data.forceMaxRotation * 10 / Time.timeScale);
+                        new Vector2(100f / Time.timeScale, 1),
+                        new Vector2(100f / Time.timeScale, 1),
+                        Player.currentCreature.data.forceMaxPosition * 100 / Time.timeScale,
+                        Player.currentCreature.data.forceMaxRotation * 100 / Time.timeScale);
                 if (Player.currentCreature.handRight.grabbedHandle)
                     Player.local.handRight.ragdollHand.grabbedHandle.SetJointDrive(
                         new Vector2(100f / Time.timeScale, 1),
@@ -177,10 +250,10 @@ namespace Quicksilver
                 else
                     Player.local.handRight.link.SetJointConfig(
                         Player.local.handRight.link.controllerJoint,
-                        new Vector2(10f / Time.timeScale, 1),
-                        new Vector2(10f / Time.timeScale, 1),
-                        Player.currentCreature.data.forceMaxPosition * 10 / Time.timeScale,
-                        Player.currentCreature.data.forceMaxRotation * 10 / Time.timeScale);
+                        new Vector2(100f / Time.timeScale, 1),
+                        new Vector2(100f / Time.timeScale, 1),
+                        Player.currentCreature.data.forceMaxPosition * 100 / Time.timeScale,
+                        Player.currentCreature.data.forceMaxRotation * 100 / Time.timeScale);
             }
             else
             {

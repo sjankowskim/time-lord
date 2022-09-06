@@ -2,9 +2,6 @@
 using ThunderRoad;
 using UnityEngine;
 using HarmonyLib;
-using Newtonsoft.Json;
-using System.IO;
-using System;
 
 namespace Quicksilver
 {
@@ -15,24 +12,27 @@ namespace Quicksilver
         TimeInABottle
     }
 
-    [Serializable]
-    public class QuicksilverData
+    public class QuicksilverData : MonoBehaviour
     {
-        public bool instantStop;
-        public bool lightningIndicators;
-        public bool lightningTrail;
-        // public bool lightningBody;
-        public QuicksilverMusic backgroundMusic;
-        public float musicVolume;
-        public float movementSpeed;
         public bool useCustomTimescale;
         public float customTimescale;
     }
 
     public class QuicksilverModule : LevelModule
     {
-        public const string OPTIONS_FILE_PATH = "\\Mods\\Quicksilver\\QuicksilverOptions.opt";
+        // TIME LORD VARIABLES
+        public bool instantStop = true;
+        public bool lightningIndicators = false;
+        public bool lightningTrail = false;
+        // public bool lightningBody;
+        // public QuicksilverMusic backgroundMusic = QuicksilverMusic.None;
+        // public float musicVolume = 1.0f;
+        public float movementSpeed = 22.0f;
+        public bool useCustomTimescale = false;
+        public float customTimescale = 50.0f;
         public static QuicksilverData data;
+
+        // SAVED DATA
         private bool quicksilverMode;
         private bool orgPlayerFallDamage;
         private bool orgHealthVignette;
@@ -42,18 +42,16 @@ namespace Quicksilver
 
         public override IEnumerator OnLoadCoroutine()
         {
-            try
-            {
-                data = JsonConvert.DeserializeObject<QuicksilverData>(File.ReadAllText(Application.streamingAssetsPath + OPTIONS_FILE_PATH));
-            }
-            catch
-            {
-                Debug.LogError("Unable to read QuicksilverOptions.opt. The mod WILL break!");
-            }
-
+            data = GameManager.local.gameObject.AddComponent<QuicksilverData>();
             Player.crouchOnJump = false;
             new Harmony("Use").PatchAll();
             return base.OnLoadCoroutine();
+        }
+
+        private void InitValues()
+        {
+            data.useCustomTimescale = useCustomTimescale;
+            data.customTimescale = customTimescale;
         }
 
         [HarmonyPatch(typeof(SpellPowerSlowTime), "Use")]
@@ -64,7 +62,7 @@ namespace Quicksilver
                 if (data.useCustomTimescale)
                 {
                     orgTimeScale = Player.currentCreature.mana.GetPowerSlowTime().scale;
-                    Player.currentCreature.mana.GetPowerSlowTime().scale = data.customTimescale;
+                    Player.currentCreature.mana.GetPowerSlowTime().scale = data.customTimescale / 100f; // Made customTimescale bigger to allow MCM to give more granularity 
                 }
                 return true;
             }
@@ -73,6 +71,7 @@ namespace Quicksilver
         public override void Update()
         {
             base.Update();
+            InitValues();
 
             if (Player.currentCreature == null) return;
             switch (GameManager.slowMotionState)
@@ -86,7 +85,7 @@ namespace Quicksilver
                         StartQuicksilver();
                     break;
                 case GameManager.SlowMotionState.Stopping:
-                    if (data.instantStop)
+                    if (instantStop)
                         GameManager.StopSlowMotion();
                     if (quicksilverMode)
                         StopQuicksilver();
@@ -98,16 +97,16 @@ namespace Quicksilver
                 if (!Player.local.locomotion.isGrounded)
                     Player.local.locomotion.rb.AddForce(Physics.gravity / Mathf.Pow(Time.timeScale, 2f), ForceMode.Acceleration);
                 Player.local.locomotion.rb.velocity = new Vector3(
-                    Player.local.locomotion.moveDirection.x / Time.timeScale * data.movementSpeed,
+                    Player.local.locomotion.moveDirection.x / Time.timeScale * movementSpeed,
                     Player.local.locomotion.rb.velocity.y,
-                    Player.local.locomotion.moveDirection.z / Time.timeScale * data.movementSpeed);
+                    Player.local.locomotion.moveDirection.z / Time.timeScale * movementSpeed);
                 UpdateJoints(true);
             }
         }
 
         private void StartQuicksilver()
         {
-            if (data.lightningIndicators)
+            if (lightningIndicators)
             {
                 EffectData lightningEffect = Catalog.GetData<EffectData>(Catalog.GetData<SpellCastLightning>("Lightning").chargeEffectId);
                 lightningEffect.volumeDb = float.MinValue;
@@ -120,13 +119,13 @@ namespace Quicksilver
                 rightInstance.Play();
             }
 
-            if (data.lightningTrail)
+            if (lightningTrail)
                Catalog.GetData<EffectData>("ImbueLightning").Spawn(Player.local.creature.ragdoll.meshRootBone).Play();
 
-            if (data.backgroundMusic != QuicksilverMusic.None)
+            /*if (backgroundMusic != QuicksilverMusic.None)
             {
                 EffectData music;
-                switch (data.backgroundMusic)
+                switch (backgroundMusic)
                 {
                     default:
                         music = Catalog.GetData<EffectData>("SweetDreams");
@@ -147,7 +146,7 @@ namespace Quicksilver
                     musicInstance.effects.ForEach(e => e.gameObject.GetComponentInChildren<AudioSource>().pitch = 1 / Time.timeScale);
                 }
                 musicInstance.Play();
-            }
+            }*/
 
             /*if ()
             {

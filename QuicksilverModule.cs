@@ -14,6 +14,7 @@ namespace Quicksilver
 
     public class QuicksilverData : MonoBehaviour
     {
+        public bool useTimeLord;
         public bool useCustomTimescale;
         public float customTimescale;
     }
@@ -21,15 +22,25 @@ namespace Quicksilver
     public class QuicksilverModule : LevelModule
     {
         // TIME LORD VARIABLES
+        [Tooltip("Turns on/off the Time Lord mod.")]
+        public bool useTimeLord = true;
+        [Tooltip("Determines if you want to want to instantly exit out of slow-mo & Quicksilver.")]
         public bool instantStop = true;
+        [Tooltip("Determines if you want to have lightning indicators appear on the player's wrists when in Quicksilver.")]
         public bool lightningIndicators = false;
+        [Tooltip("Determines if you want to have a lightning trail appear behind the player when in Quicksilver. (BROKEN ATM)")]
         public bool lightningTrail = false;
         // public bool lightningBody;
         // public QuicksilverMusic backgroundMusic = QuicksilverMusic.None;
         // public float musicVolume = 1.0f;
+        [Tooltip("Determines how fast the player moves in Quicksilver.")]
+        [Range(0, 100)]
         public float movementSpeed = 22.0f;
+        [Tooltip("Determines if the player wants to use a separate time scale from the in-game one for Quicksilver.")]
         public bool useCustomTimescale = false;
-        public float customTimescale = 50.0f;
+        [Tooltip("Determines the player's time scale for Quicksilver if they decide to use the custom timescale option.")]
+        [Range(0, 1)]
+        public float customTimescale = 0.50f;
         public static QuicksilverData data;
 
         // SAVED DATA
@@ -50,6 +61,7 @@ namespace Quicksilver
 
         private void InitValues()
         {
+            data.useTimeLord = useTimeLord;
             data.useCustomTimescale = useCustomTimescale;
             data.customTimescale = customTimescale;
         }
@@ -59,10 +71,10 @@ namespace Quicksilver
         {
             public static bool Prefix()
             {
-                if (data.useCustomTimescale)
+                if (data.useCustomTimescale && data.useTimeLord)
                 {
                     orgTimeScale = Player.currentCreature.mana.GetPowerSlowTime().scale;
-                    Player.currentCreature.mana.GetPowerSlowTime().scale = data.customTimescale / 100f; // Made customTimescale bigger to allow MCM to give more granularity 
+                    Player.currentCreature.mana.GetPowerSlowTime().scale = data.customTimescale;
                 }
                 return true;
             }
@@ -81,7 +93,7 @@ namespace Quicksilver
                         StopQuicksilver();
                     break;
                 case GameManager.SlowMotionState.Starting:
-                    if (PlayerControl.handRight.usePressed || PlayerControl.handLeft.usePressed)
+                    if (useTimeLord && PlayerControl.handRight.usePressed || PlayerControl.handLeft.usePressed)
                         StartQuicksilver();
                     break;
                 case GameManager.SlowMotionState.Stopping:

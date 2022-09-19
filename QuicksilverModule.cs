@@ -38,9 +38,9 @@ namespace Quicksilver
         public float movementSpeed = 22.0f;
         [Tooltip("Determines if the player wants to use a separate time scale from the in-game one for Quicksilver.")]
         public bool useCustomTimescale = false;
-        [Tooltip("Determines the player's time scale for Quicksilver if they decide to use the custom timescale option.")]
-        [Range(0, 1)]
-        public float customTimescale = 0.50f;
+        [Tooltip("Determines the player's time scale for Quicksilver if they decide to use the custom timescale option. (50 = 0.5 timescale)")]
+        [Range(1, 100)]
+        public float customTimescale = 50f;
         public static QuicksilverData data;
 
         // SAVED DATA
@@ -74,7 +74,7 @@ namespace Quicksilver
                 if (data.useCustomTimescale && data.useTimeLord)
                 {
                     orgTimeScale = Player.currentCreature.mana.GetPowerSlowTime().scale;
-                    Player.currentCreature.mana.GetPowerSlowTime().scale = data.customTimescale;
+                    Player.currentCreature.mana.GetPowerSlowTime().scale = data.customTimescale / 100f;
                 }
                 return true;
             }

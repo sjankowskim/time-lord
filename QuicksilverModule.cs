@@ -1,8 +1,9 @@
-using System.Collections;
+﻿using System.Collections;
 using ThunderRoad;
 using UnityEngine;
 using HarmonyLib;
-using System;
+using System.IO;
+using UnityEngine.Networking;
 
 namespace Quicksilver
 {
@@ -10,76 +11,140 @@ namespace Quicksilver
     {
         None,
         SweetDreams,
-        TimeInABottle
+        TimeInABottle,
+        Custom
     }
 
-    public class MenuBookLoader : CustomData
+    public class QuicksilverModule : ThunderScript
     {
-        MenuBook menu;
-        public override void OnCatalogRefresh()
+        public static ModOptionFloat[] zeroToOneHundered()
         {
-            base.OnCatalogRefresh();
-            menu = new MenuBook();
+            ModOptionFloat[] options = new ModOptionFloat[101];
+            float val = 0;
+            for (int i = 0; i < options.Length; i++)
+            {
+                options[i] = new ModOptionFloat(val.ToString("0.0"), val);
+                val += 1f;
+            }
+            return options;
         }
-    }
 
-    public class QuicksilverData : MonoBehaviour
-    {
-        public bool useTimeLord;
-        public bool useCustomTimescale;
-        public float customTimescale;
-        public bool inQuicksilver;
-    }
+        [ModOption(name: "Use Time Lord Mod", tooltip: "Turns on/off the Time Lord mod.", defaultValueIndex = 1, order = 0)]
+        public static void TimeLordChange(bool option)
+        {
+            GameManager.options.crouchOnJump = !option;
+            useTimeLord = option;
+        }
+        public static bool useTimeLord;
 
-    public class QuicksilverModule : LevelModule
-    {
-        // TIME LORD VARIABLES
-        [Tooltip("Turns on/off the Time Lord mod.")]
-        public bool useTimeLord = true;
-        [Tooltip("Determines if you want to want to instantly exit out of slow-mo & Quicksilver.")]
-        public bool useInstantStop = true;
-        [Tooltip("Determines if you want to have lightning indicators appear on the player's wrists when in Quicksilver.")]
-        public bool useLightningIndicators = false;
-        [Tooltip("Determines if you want to have a lightning trail appear behind the player when in Quicksilver. (BROKEN ATM)")]
-        public bool useLightningTrail = false;
-        [Tooltip("Determines if you want to feel haptic feedback through your controllers when in Quicksilver.")]
-        public bool useHaptics = true;
-        [Tooltip("Determines if the player wants to use a separate time scale from the in-game one for Quicksilver.")]
-        public bool useCustomTimescale = false;
-        [Tooltip("Determines the player's time scale for Quicksilver if they decide to use the custom timescale option. (e.g. 50 = 0.5 timescale)")]
-        [Range(1, 100)]
-        public float customTimescale = 50f;
+        [ModOption(name: "Use Instant Stop", tooltip: "Determines if you want to want to instantly exit out of slow-mo & Quicksilver.", defaultValueIndex = 1, order = 1)]
+        public static bool useInstantStop;
+
+        [ModOption(name: "Use Lightning Indicators", tooltip: "Determines if you want to have lightning indicators appear on the player's wrists when in Quicksilver.", defaultValueIndex = 0, order = 2)]
+        public static bool useLightningIndicators;
+
+        [ModOption(name: "Use Haptics", tooltip: "Determines if you want to feel haptic feedback through your controllers when in Quicksilver", defaultValueIndex = 1, order = 4)]
+        public static bool useHaptics;
+
+        [ModOption(name: "Use Custom Timescale", tooltip: "Determines if the player wants to use a separate time scale from the in-game one for Quicksilver.", category = "Custom Timescale", defaultValueIndex = 0, order = 0)]
+        public static bool useCustomTimescale;
+
+        [ModOption(name: "Custom Timescale Percentage", tooltip: "Determines the player's time scale for Quicksilver if they decide to use the custom timescale option.", category = "Custom Timescale", valueSourceName = nameof(zeroToOneHundered), defaultValueIndex = 50, order = 1)]
+        public static float customTimescale;
+
         // public bool lightningBody;
-        [Tooltip("Determines what music to play in the background when in Quicksilver, if any.")]
-        public QuicksilverMusic backgroundMusic = QuicksilverMusic.None;
-        [Tooltip("Determines the volume of the background music.")]
-        [Range(0, 100)]
-        public float musicVolume = 100.0f;
-        [Tooltip("Determines how fast the player moves when in Quicksilver.")]
-        [Range(0, 100)]
-        public float movementSpeed = 22.0f;
-        public static QuicksilverData data;
+
+        [ModOption(name: "Background Music", tooltip: "Determines what music to play in the background when in Quicksilver, if any.", category = "Music", defaultValueIndex = 0, order = 0)]
+        public static void ChangeMusicChoice(QuicksilverMusic musicChoice)
+        {
+            bool playAfterChange = musicSource.isPlaying;
+
+            switch (musicChoice)
+            {
+                case QuicksilverMusic.None:
+                    musicSource.clip = musicClips[0];
+                    break;
+                case QuicksilverMusic.SweetDreams:
+                    musicSource.clip = musicClips[1];
+                    break;
+                case QuicksilverMusic.TimeInABottle:
+                    musicSource.clip = musicClips[2];
+                    break;
+                case QuicksilverMusic.Custom:
+                    musicSource.clip = musicClips[3];
+                    break;
+            }
+
+            if (playAfterChange)
+                musicSource.Play();
+        }
+
+        [ModOption(name: "Music Volume", tooltip: "Determines the volume of the background music.", valueSourceName = nameof(zeroToOneHundered), category = "Music", defaultValueIndex = 100, order = 1)]
+        public static void ChangeMusicVolume(float musicVolume)
+        {
+            musicSource.volume = musicVolume / 100f;
+        }
+
+        // [ModOption(name: "Pause Music", tooltip: "Determines whether to pause/resume music at the same spot on successive Quicksilvers instead of restarting it.", category = "Music", defaultValueIndex = 0, order = 2)]
+        // public static bool pauseMusic;
+
+        [ModOption(name: "Movement Speed", tooltip: "Determines how fast the player moves when in Quicksilver.", valueSourceName = nameof(zeroToOneHundered), defaultValueIndex = 22, order = 10)]
+        public static float movementSpeed;
 
         // SAVED DATA
         private static bool inQuicksilver;
-        private bool orgPlayerFallDamage;
-        private bool orgHealthVignette;
-        private bool orgHaptics;
-        private static float orgTimeScale;
-        private Locomotion.CrouchMode orgMode;
-        private EffectInstance leftInstance, rightInstance, trailInstance;
-        private AudioSource music;
+        private EffectInstance leftInstance, rightInstance;
         private float quicksilverScale;
 
-        public override IEnumerator OnLoadCoroutine()
+        private static AudioSource musicSource;
+        private static AudioClip[] musicClips = new AudioClip[4];
+        // private static float musicTime;
+
+        public struct OriginalData
         {
-            data = GameManager.local.gameObject.AddComponent<QuicksilverData>();
-            music = GameManager.local.gameObject.AddComponent<AudioSource>();
-            music.playOnAwake = false;
-            music.loop = true;
-            Player.crouchOnJump = false;
+            public bool playerFallDamage;
+            public bool healthVignette;
+            public bool haptics;
+            public float? timeScale;
+            public Locomotion.CrouchMode crouchMode;
+        } 
+        public static OriginalData orgData;
+
+        public override void ScriptLoaded(ModManager.ModData modData)
+        {
+            base.ScriptLoaded(modData);
             new Harmony("Use").PatchAll();
-            return base.OnLoadCoroutine();
+            musicSource = GameManager.local.gameObject.AddComponent<AudioSource>();
+            musicSource.loop = true;
+            GameManager.local.StartCoroutine(LoadMP3s());
+        }
+
+        private IEnumerator LoadMP3s()
+        {
+            string[] mp3Files = Directory.GetFiles(Application.streamingAssetsPath + "/Mods/Quicksilver", "*.mp3", SearchOption.AllDirectories);
+
+            musicClips[0] = AudioClip.Create("empty", 44100, 1, 44100, false);
+            Catalog.LoadAssetAsync<AudioClip>("ChillioX.Quicksilver.SweetDreams", value => musicClips[1] = value, "ChillioX");
+            Catalog.LoadAssetAsync<AudioClip>("ChillioX.Quicksilver.TimeInABottle", value => musicClips[2] = value, "ChillioX");
+
+            if (mp3Files.Length == 0)
+            {
+                Debug.LogWarning("(Time Lord) Unable to find any MP3 clips!");
+            }
+
+            System.Random random = new System.Random();
+            UnityWebRequest req = UnityWebRequestMultimedia.GetAudioClip("file://" + mp3Files[random.Next(0, mp3Files.Length)], AudioType.MPEG);
+
+            yield return req.SendWebRequest();
+
+            if (req.result == UnityWebRequest.Result.Success)
+            {
+                musicClips[3] = DownloadHandlerAudioClip.GetContent(req);
+            }
+            else
+            {
+                Debug.LogError("(Time Lord) Unable to grab custom MP3 clip!");
+            }
         }
 
         [HarmonyPatch(typeof(SpellPowerSlowTime), "Use")]
@@ -87,72 +152,34 @@ namespace Quicksilver
         {
             public static bool Prefix()
             {
-                if ((PlayerControl.handRight.usePressed || PlayerControl.handLeft.usePressed) && data.useCustomTimescale && data.useTimeLord)
+                if ((PlayerControl.handRight.usePressed || PlayerControl.handLeft.usePressed) && useCustomTimescale && useTimeLord && !inQuicksilver)
                 {
-                    orgTimeScale = Player.currentCreature.mana.GetPowerSlowTime().scale;
-                    Player.currentCreature.mana.GetPowerSlowTime().scale = data.customTimescale / 100f;
+                    orgData.timeScale = Player.currentCreature.mana.GetPowerSlowTime().scale;
+                    Player.currentCreature.mana.GetPowerSlowTime().scale = customTimescale / 100f;
                 }
                 return true;
             }
         }
 
-        [HarmonyPatch(typeof(PlayerControl), "Jump")]
-        class JumpPatch
+        public override void ScriptUpdate()
         {
-            public static bool Prefix(bool active)
-            {
-                if (active && data.inQuicksilver && Player.local.locomotion.isGrounded)
-                {
-                    Player.local.locomotion.rb.AddForce(new Vector3(0, Vector3.up.y * Physics.gravity.magnitude / Mathf.Pow(Time.timeScale, 2) * EvalFunc(Time.timeScale), 0), ForceMode.VelocityChange);
-                }
-
-                return true;
-            }
-
-            // Don't ask where this comes from.
-            private static float EvalFunc(float x)
-            {
-                return 0.506f * x + 4.11f * Mathf.Pow(10f, -3f);
-            }
-        }
-
-        private void InitValues()
-        {
-            data.useTimeLord = useTimeLord;
-            data.useCustomTimescale = useCustomTimescale;
-            data.customTimescale = customTimescale;
-            data.inQuicksilver = inQuicksilver;
-            music.volume = musicVolume / 100f;
-
-            try
-            {
-                MenuBook.local.lerpSpeed = 3f / Time.timeScale;
-                MenuBook.local.closeDelay = 1f * Time.timeScale;
-                MenuBook.local.book.GetBookAnimator().speed = 3f / Time.timeScale;
-                MenuBook.local.book.GetPageAnimator().speed = 5.6f / Time.timeScale;
-            }
-            catch { }
-        }
-
-        public override void Update()
-        {
-            base.Update();
-            InitValues();
+            base.ScriptUpdate();
 
             if (Player.currentCreature == null) return;
-            switch (GameManager.slowMotionState)
+
+            switch (TimeManager.slowMotionState)
             {
-                case GameManager.SlowMotionState.Disabled:
+                case TimeManager.SlowMotionState.Disabled:
                     if (inQuicksilver)
                         StopQuicksilver();
                     break;
-                case GameManager.SlowMotionState.Starting:
-                    if (useTimeLord && (PlayerControl.handRight.usePressed || PlayerControl.handLeft.usePressed))
+                case TimeManager.SlowMotionState.Starting:
+                    if (useTimeLord && !inQuicksilver && (PlayerControl.handRight.usePressed || PlayerControl.handLeft.usePressed))
                         StartQuicksilver();
                     break;
-                case GameManager.SlowMotionState.Stopping:
+                case TimeManager.SlowMotionState.Stopping:
                     if (useInstantStop)
-                        GameManager.StopSlowMotion();
+                        TimeManager.StopSlowMotion();
                     if (inQuicksilver)
                         StopQuicksilver();
                     break;
@@ -170,15 +197,6 @@ namespace Quicksilver
             }
         }
 
-        private void ChangeColors(ParticleSystem system)
-        {
-            var colorOverLifetime = system.colorOverLifetime;
-            colorOverLifetime.color = new ParticleSystem.MinMaxGradient(Color.red);
-            var main = system.main;
-            main.startColor = new ParticleSystem.MinMaxGradient(Color.red);
-            Debug.LogWarning("Changed color");
-        }
-
         private void StartQuicksilver()
         {
             // Indicate that the player is in Quicksilver mode
@@ -187,65 +205,46 @@ namespace Quicksilver
             // Check if they are using lightning indicators
             if (useLightningIndicators)
             {
-                EffectData lightningEffect = Catalog.GetData<EffectData>(Catalog.GetData<SpellCastLightning>("Lightning").chargeEffectId);
+                EffectData lightningEffect = Catalog.GetData<EffectData>("ImbueLightningRagdoll");
                 lightningEffect.volumeDb = float.MinValue;
 
                 leftInstance = lightningEffect.Spawn(Player.local.handLeft.ragdollHand.transform);
-/*                foreach (Effect effect in leftInstance.effects)
-                {
-                    //Debug.LogWarning(effect);
-                    if (effect is EffectVfx effectVfx)
-                    {
-                        //Debug.Log("HELLO: " + effectVfx.vfx.GetGradient(effectVfx.vfx.GetInstanceID()));
-                    }
-                }*/
-                leftInstance.SetIntensity(1f);
                 leftInstance.Play();
+
                 rightInstance = lightningEffect.Spawn(Player.local.handRight.ragdollHand.transform);
-                rightInstance.SetIntensity(1f);
                 rightInstance.Play();
             }
 
-            // Check if they are using lightning trail
-            if (useLightningTrail)
+            // Check if they are using background 
+/*            if (pauseMusic)
             {
-                trailInstance = Catalog.GetData<EffectData>("ImbueLightning").Spawn(Player.local.creature.ragdoll.meshRootBone);
-                trailInstance.SetIntensity(1f);
-                trailInstance.Play();
+                musicSource.time = musicTime;
             }
-
-            // Check if they are using background music
-            if (backgroundMusic != QuicksilverMusic.None)
+            else
             {
-                if (backgroundMusic == QuicksilverMusic.SweetDreams)
-                    Catalog.LoadAssetAsync<AudioClip>("ChillioX.Quicksilver.SweetDreams", value => music.clip = value, "ChillioX");
-                else
-                    Catalog.LoadAssetAsync<AudioClip>("ChillioX.Quicksilver.TimeInABottle", value => music.clip = value, "ChillioX");
-                music.Play();
-            }
-
-            /*if ()
-            {
-                EffectData bodyEffect = Catalog.GetData<EffectData>(Catalog.GetData<SpellCastLightning>("Lightning").boltLoopEffectId);
-                bodyInstance = bodyEffect.Spawn(Player.local.creature.ragdoll.transform);
-                bodyInstance.Play();
+                musicSource.time = 0f;
             }*/
 
+            musicSource.Play();
+
             // Gather original settings
-            orgPlayerFallDamage = Player.fallDamage;
-            orgHealthVignette = CameraEffects.healthVignette;
-            orgMode = GameManager.options.stickCrouchMode;
-            orgHaptics = GameManager.options.rumble;
+            orgData.playerFallDamage = Player.fallDamage;
+            orgData.healthVignette = CameraEffects.healthVignette;
+            orgData.crouchMode = GameManager.options.stickCrouchMode;
+            orgData.haptics = GameManager.options.rumble;
+
+            Player.fallDamage = false;
+            CameraEffects.healthVignette = false;
+            GameManager.options.stickCrouchMode = Locomotion.CrouchMode.Disabled;
+            GameManager.options.rumble = useHaptics;
 
             // Remove red vignette because it is really annoying
             CameraEffects.RefreshHealth();
 
-            GameManager.options.stickCrouchMode = Locomotion.CrouchMode.Disabled;
-            CameraEffects.healthVignette = false;
-            Player.fallDamage = false;
-            UpdateQuicksilver(true);
-            Player.local.locomotion.customGravity = 1 / Mathf.Pow(Time.timeScale, 2);
+            Player.local.locomotion.customGravity = Mathf.Pow(Time.timeScale, -2);
             quicksilverScale = Time.timeScale;
+
+            UpdateQuicksilver(true);
         }
 
         private void UpdateQuicksilver(bool entering)
@@ -257,6 +256,14 @@ namespace Quicksilver
             Player.currentCreature.data.ragdollData.fingerSpeed = 5f / Time.timeScale;
             Player.currentCreature.animator.speed = 1f / Time.timeScale;
             Player.local.locomotion.airSpeed = entering ? Player.local.locomotion.forwardSpeed : 0.04f;
+
+            // Player.local.locomotion.rb.drag = 3f / Time.timeScale;
+
+            // JUMP FORCE MODIFIERS
+            Player.local.locomotion.jumpGroundForce = 0.3f / Mathf.Pow(Time.timeScale, 2);
+            Player.local.locomotion.jumpMaxDuration = 0.6f * Time.timeScale;
+            Player.local.locomotion.jumpClimbHorizontalMultiplier = 1f / Time.timeScale;
+            Player.local.locomotion.jumpClimbVerticalMultiplier = 0.8f / Time.timeScale;
 
             // TURN MODIFIERS
             Player.currentCreature.turnSpeed = 6f / Time.timeScale;
@@ -280,32 +287,34 @@ namespace Quicksilver
             inQuicksilver = false;
 
             // Check if they are using custom timescale. Reset scale as necessary.
-            if (data.useCustomTimescale)
-                Player.currentCreature.mana.GetPowerSlowTime().scale = orgTimeScale;
+            if (orgData.timeScale != null)
+            {
+                Player.currentCreature.mana.GetPowerSlowTime().scale = (float)orgData.timeScale;
+                orgData.timeScale = null;
+            }
+                
 
             // Check if they are using lightning indicators. Stop as necessary.
-            if (useLightningIndicators)
+            if (leftInstance != null)
             {
                 leftInstance.Stop();
                 rightInstance.Stop();
+                leftInstance = null;
+                rightInstance = null;
             }
 
-            // Check if they are using lightning trail. Stop as necessary.
-            if (useLightningTrail)
-                trailInstance.Stop();
-
             // Check if they are using background music. Stop as necessary.
-            if (backgroundMusic != QuicksilverMusic.None)
-                music.Stop();
+/*            if (pauseMusic)
+            {
+                musicTime = musicSource.time;
+            }*/
+            musicSource.Stop();
 
             // Restore all original value
-            Player.fallDamage = orgPlayerFallDamage;
-            CameraEffects.healthVignette = orgHealthVignette;
-            GameManager.options.stickCrouchMode = orgMode;
-            GameManager.options.rumble = orgHaptics;
-
-            // Reset the player attributes to normal scale
-            UpdateQuicksilver(false);
+            Player.fallDamage = orgData.playerFallDamage;
+            CameraEffects.healthVignette = orgData.healthVignette;
+            GameManager.options.stickCrouchMode = orgData.crouchMode;
+            GameManager.options.rumble = orgData.haptics;
 
             // Reset the custom gravity felt by the player
             Player.local.locomotion.customGravity = 0f;
@@ -315,6 +324,9 @@ namespace Quicksilver
                 Player.local.locomotion.moveDirection.x,
                 Player.local.locomotion.rb.velocity.y * Mathf.Pow(quicksilverScale, 2),
                 Player.local.locomotion.moveDirection.z);
+
+            // Reset the player attributes to normal scale
+            UpdateQuicksilver(false);
 
             UpdateJoints(false);
         }
